@@ -16,3 +16,18 @@ https://github.com/logpai/loghub/tree/master/HDFS
 - LSTM
 - React
 - FastAPI
+
+## Sample Output
+
+============================================================
+ANOMALY DETECTED
+============================================================
+Time:        260821 202102
+Block ID:    blk_-3102267849859399193
+Component:   dfs.DataNode$PacketResponder
+Probability: 1.0000
+Sequence:    6 events
+Message:     PacketResponder blk_-3102267849859399193 2 Exception java.io.EOFException
+============================================================
+
+
