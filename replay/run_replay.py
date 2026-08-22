@@ -16,7 +16,55 @@ from inference.sequence_builder import SequenceBuilder
 from inference.predictor import LSTMPredictor
 from inference.alert_manager import AlertManager
 
+import json
+from urllib.request import Request, urlopen
+from urllib.error import URLError
 
+API_URL = "http://127.0.0.1:8000"
+
+def send_to_api(endpoint, data):
+
+    try:
+        payload = json.dumps(data).encode("utf-8")
+
+        request = Request(
+            f"{API_URL}{endpoint}",
+            data=payload,
+            headers={
+                "Content-Type": "application/json"
+            },
+            method="POST",
+        )
+
+        with urlopen(request, timeout=2) as response:
+            return response.read()
+
+    except URLError as error:
+
+        print(
+            f"[API ERROR] "
+            f"Could not send data to {endpoint}: {error}"
+        )
+
+        return None
+
+
+def send_event_to_api(event):
+
+    send_to_api(
+        "/api/events",
+        event
+    )
+
+
+def send_anomaly_to_api(anomaly):
+
+    send_to_api(
+        "/api/anomalies",
+        anomaly
+    )
+
+# Monitoring configuration
 WINDOW_MINUTES = 10
 CHECK_INTERVAL_MINUTES = 5
 MAX_SEQUENCE_LENGTH = 298
@@ -42,7 +90,7 @@ def evaluate_window(
     if not window_events:
         return
 
-    # Build fresh sequences for THIS 5-minute window.
+    # Build fresh sequences for THIS monitoring window.
     window_builder = SequenceBuilder(
         max_length=MAX_SEQUENCE_LENGTH
     )
@@ -79,11 +127,37 @@ def evaluate_window(
             result
         )
 
+        # If this prediction should not create a new alert,
+        # continue to the next block.
         if not should_alert:
             continue
 
         event = latest_events[block_id]
 
+        probability = result["probability"]
+
+        # Send anomaly to FastAPI backend.
+        send_anomaly_to_api(
+            {
+                "block_id": block_id,
+                "component": event.get(
+                    "Component",
+                    "Unknown"
+                ),
+                "probability": probability * 100,
+                "sequence_length": len(sequence),
+                "time": (
+                    f"{event['Date']} "
+                    f"{event['Time']}"
+                ),
+                "message": event.get(
+                    "Message",
+                    ""
+                ),
+            }
+        )
+
+        # Console output
         print("\n" + "=" * 60)
         print("ANOMALY DETECTED")
         print("=" * 60)
@@ -105,7 +179,7 @@ def evaluate_window(
 
         print(
             f"Probability: "
-            f"{result['probability']:.4f}"
+            f"{probability:.4f}"
         )
 
         print(
@@ -147,6 +221,26 @@ def run():
             parsed_event
         )
 
+        block_id = parsed_event.get("BlockId")
+
+        send_event_to_api(
+            {
+                "time": (
+                    f"{parsed_event['Date']} "
+                    f"{parsed_event['Time']}"
+                ),
+                "block_id": block_id,
+                "component": parsed_event.get(
+                    "Component",
+                    "Unknown"
+                ),
+                "message": parsed_event.get(
+                    "Message",
+                    ""
+                ),
+            }
+        )
+
         # Add current event to rolling window.
         window_events.append(
             (
@@ -167,7 +261,8 @@ def run():
         ):
             window_events.popleft()
 
-        # First check happens after 5 minutes of replay time.
+        # First check happens after the first
+        # complete 5-minute monitoring window.
         if next_check_time is None:
             next_check_time = (
                 event_time
